@@ -1,7 +1,7 @@
 // background.js — the coordinator/hub. Everything routes through here.
 // Message shape convention: { type: string, payload: any }
 
-const SERVER_URL = "http://localhost:8787/agent"; // swap for your real endpoint sometime in 800 years
+const SERVER_URL = "http://localhost:8787/agent"; // swap for your real server endpoint sometime in 800 years
 const BLUR_SERVER_URL = "http://localhost:8788/blur"; // Python mediapipe+teserract service
 
 async function blurImageLocally(dataUrl) {

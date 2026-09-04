@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+opencv-python
+numpy
+mediapipe
+pytesseract
+# spacy            # uncomment if ENABLE_NAME_DETECTION = True in blur_server.py
