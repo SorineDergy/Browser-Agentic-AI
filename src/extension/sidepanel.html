@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; font-size: 14px; }
+    #log { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; max-height: 70vh; overflow-y: auto; }
+    .entry { padding: 6px 8px; border-radius: 6px; background: #f2f2f2; white-space: pre-wrap; }
+    .entry.user { background: #e6f0ff; align-self: flex-end; }
+    .entry.error { background: #ffe6e6; }
+    #inputRow { display: flex; gap: 6px; }
+    #textInput { flex: 1; padding: 6px; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="log"></div>
+  <div id="inputRow">
+    <input id="textInput" type="text" placeholder="Ask the agent to do something..." />
+    <button id="micBtn" title="Voice input">🎤</button>
+    <button id="sendBtn">Send</button>
+  </div>
+  <script src="sidepanel.js" type="module"></script>
+</body>
+</html>
