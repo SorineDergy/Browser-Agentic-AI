@@ -1,0 +1,28 @@
+
+{
+  "manifest_version": 3,
+  "name": "Browser AI Agent",
+  "version": "0.1.0",
+  "description": "Text/Voice chat agent that makes your browser usage convinient! With the added benefit of privacy!",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost:8787/*",
+    "http://localhost:8788/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Agent"
+  }
+}
