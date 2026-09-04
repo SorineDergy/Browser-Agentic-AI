@@ -21,9 +21,15 @@
 
 
 Debian based distrobutions: ```apt install tesseract-ocr```
+
+<br>
+
 Arch based distrobutions: ```pacman -S tesseract tesseract-data-eng```
+<br>
 Windows: ```https://tesseract-ocr.github.io/tessdoc/Installation.html```
+<br>
 MacOS: ```brew install tesseract```
+<br>
 
 # Noteworthy stuff:
 
