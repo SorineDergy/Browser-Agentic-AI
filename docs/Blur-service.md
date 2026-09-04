@@ -21,9 +21,7 @@
 
 
 Debian based distrobutions: ```apt install tesseract-ocr```
-
 <br>
-
 Arch based distrobutions: ```pacman -S tesseract tesseract-data-eng```
 <br>
 Windows: ```https://tesseract-ocr.github.io/tessdoc/Installation.html```
@@ -37,7 +35,9 @@ MacOS: ```brew install tesseract```
 while this library is in the requirments.txt, its not directly imported into the python script as the relationship runs the other way, as in uvicorn imports the file instead of the file importing.
 
 To start the service: ```uvicorn blur_server:app --port 8788``` in ```blur_service\```
+<br>
 -# dont forget too install the dependencies in the folder first! ```pip install -r requirments.txt```
+<br>
 
 ## Regular Expressions (REGEX):
 Regex is used for pattern based detection for text acquired from the text extracted from the image
