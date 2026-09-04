@@ -11,7 +11,8 @@
 - pytesseract -> A python wrapper for Google's Tesseract OCR engine that extracts text from images
 - FastAPI, from fastapi -> useful for configuring, building and running web applications
 - CORSMiddleware, from fastapi.middleware.cors -> lets us handle Cross origin resource sharing, allows FastAPI to safely accept requests from a frontend hosted on a different domain, port or protocol
-- Output, from pytesseract - provides a helper class used to change the format and data type of the OCR results returned by the functions
+- Output, from pytesseract -> provides a helper class used to change the format and data type of the OCR results returned by the functions
+- uvicorn[standard] -> used to open port 8788 and listens for incoming TCP connections, speaks the HTTP protocol and hands each incoming request off to FastAPI
 
 
 # IMPORTANT
@@ -23,6 +24,14 @@ Debian based distrobutions: ```apt install tesseract-ocr```
 Arch based distrobutions: ```pacman -S tesseract tesseract-data-eng```
 Windows: ```https://tesseract-ocr.github.io/tessdoc/Installation.html```
 MacOS: ```brew install tesseract```
+
+# Noteworthy stuff:
+
+## Uvicorn:
+while this library is in the requirments.txt, its not directly imported into the python script as the relationship runs the other way, as in uvicorn imports the file instead of the file importing.
+
+To start the service: ```uvicorn blur_server:app --port 8788``` in ```blur_service\```
+-# dont forget too install the dependencies in the folder first! ```pip install -r requirments.txt```
 
 ## Regular Expressions (REGEX):
 Regex is used for pattern based detection for text acquired from the text extracted from the image
