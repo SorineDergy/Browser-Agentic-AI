@@ -36,7 +36,7 @@ while this library is in the requirments.txt, its not directly imported into the
 
 To start the service: ```uvicorn blur_server:app --port 8788``` in ```blur_service\```
 <br>
--# dont forget too install the dependencies in the folder first! ```pip install -r requirments.txt```
+dont forget too install the dependencies in the folder first! ```pip install -r requirments.txt```
 <br>
 
 ## Regular Expressions (REGEX):
