@@ -26,9 +26,9 @@
 ### Get one at "https://aistudio.google.com/app/apikey"
 
 ```
-cd server/
-npm install
-npm start
+   cd server/
+   npm install
+   npm start
 
 ```
 
