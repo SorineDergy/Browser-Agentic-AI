@@ -2,6 +2,6 @@ fastapi
 uvicorn[standard]
 opencv-python
 numpy
-mediapipe
+mediapipe==0.10.21  # newer versions (0.10.31+) removed the legacy mp.solutions API
 pytesseract
 # spacy            # uncomment if ENABLE_NAME_DETECTION = True in blur_server.py

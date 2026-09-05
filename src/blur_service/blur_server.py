@@ -3,17 +3,18 @@ import math
 import re
 from collections import Counter
 import cv2
-import mediapipe as mediapipe
+import mediapipe as mp
 import numpy as np
 import pytesseract
-from fastapi import FastAPI 
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from pytesseract import Output
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], # PLEASE REPLACE THIS WILDCARD WITH THE CHROME EXTENSION ID LATER
-    allow_methords=["POST"],
+    allow_methods=["POST"],
     allow_headers=["*"],
 )
 class BlurRequest(BaseModel):
@@ -124,7 +125,7 @@ def contains_pii(text: str) -> bool:
     return False
 
 
-def apply_blur(image, x1, y1, x2, y2, kernel_size=(31, 31)):
+def apply_blur(image, x1, y1, x2, y2, kernel_size=(101, 101)):
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(image.shape[1], x2), min(image.shape[0], y2)
 
