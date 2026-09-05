@@ -31,7 +31,7 @@ MacOS: ```brew install tesseract```
 
 # Noteworthy stuff:
 
-## Uvicorn:
+## Uvicorn
 while this library is in the requirments.txt, its not directly imported into the python script as the relationship runs the other way, as in uvicorn imports the file instead of the file importing.
 
 To start the service: ```uvicorn blur_server:app --port 8788``` in ```blur_service\```
@@ -39,7 +39,7 @@ To start the service: ```uvicorn blur_server:app --port 8788``` in ```blur_servi
 dont forget too install the dependencies in the folder first! ```pip install -r requirments.txt```
 <br>
 
-## Regular Expressions (REGEX):
+## Regular Expressions (REGEX)
 Regex is used for pattern based detection for text acquired from the text extracted from the image
 
 PII_PATTERNS: hold the regex information for Email, Phone, SSN/ID and Credit card.
@@ -60,17 +60,17 @@ This is used in our script too catch generic APIs and secrets/tokens.
 # Future additional Implementations:
 ## India's goverment ID system:
 India relies on multiple algorithms for their different identifications.
-### Aadhaar (National Digital ID):
+### Aadhaar (National Digital ID)
 first 11 digits of the number are completely random.
 12th Digit serves as the checksum, calculated by the "Verhoeff algorithm".
-### PAN (Permanent Account Number - Income Tax):
+### PAN (Permanent Account Number - Income Tax)
 The PAN is a 10-character alphanumeric string structured in a strict format (e.g., ABCDE1234F). The first 5 characters are letters, the next 4 are sequential numbers, and the 10th character is an alphabetic check digit.
 The check digit is calculated by assigning specific numerical weights to the positions of the first 9 characters, multiplying them by assigned values for each letter/digit, and applying a custom modulus formula to generate the final verifying letter.(?)
-### Voter ID/EPIC (Electors Photo Identity Card):
+### Voter ID/EPIC (Electors Photo Identity Card)
 The Election Commission of India (ECI) uses a 10-character alphanumeric system. The first 3 characters are an alphabetic functional code designating the Electoral Registration Office, followed by a 7-digit unique sequential number. It does not utilize a mathematical validation checksum like Aadhaar; instead, it relies on strict formatting rules and centralized database lookups
 
 ## Name Detection with SpaCy
 This feature is currently disabled as Names are very hard to filter, impossible with Regex and even trained models have a hard time detecing names consistently. A future feature to be implemented when everything else works.
 
-## Specific goverment IDs from different countries that also use their own algorithms(?) Would Time complexity be too high for this(?)
+## Specific goverment IDs from different countries that also use their own algorithms(?) Would Time complexity be too high for this(?) Would we eventually want too move to an Allowlist system instead of a Blocklist system(?)
 
