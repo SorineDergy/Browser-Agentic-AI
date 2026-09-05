@@ -158,14 +158,7 @@ def contains_pii(text: str) -> bool:
 def apply_blur(image, x1, y1, x2, y2, fill_color=(0, 0, 0)):
     """Despite the name (kept for compatibility with existing call sites),
     this now REDACTS the region with a solid color rather than blurring it.
-
-    Why: Gaussian blur and pixelation are both reconstructable by modern
-    deep-learning deblurring/re-identification models — this is well
-    documented in privacy research (e.g. faces blurred at high strength
-    have been restored and re-identified with >95% accuracy by attacker
-    models). A solid fill removes the information entirely rather than
-    degrading it, so there's nothing for an attacker (or a vision model
-    on the receiving end) to reconstruct.
+    Thats because Gaussian blur is VERY reversable with high accuracy according to privacy research papers smh.
     """
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(image.shape[1], x2), min(image.shape[0], y2)
@@ -178,9 +171,6 @@ def blur_pii_and_faces(image: np.ndarray) -> np.ndarray:
     h, w, _ = image.shape
 
     # 1. SCAN AND BLUR TEXT PII (Tesseract)
-    # image_to_data gives per-word boxes — much faster than EasyOCR's
-    # neural detector, and a good fit since screenshots are clean
-    # rendered text rather than photos of text in the wild.
     ocr_data = pytesseract.image_to_data(image, output_type=Output.DICT)
     n_boxes = len(ocr_data["text"])
     for i in range(n_boxes):
