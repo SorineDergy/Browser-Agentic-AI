@@ -1,15 +1,3 @@
-# blur_server.py — local HTTP wrapper around your mediapipe + tesseract
-# blur script.
-#
-# System dependency (not pip-installable): the Tesseract OCR binary itself.
-#   macOS:   brew install tesseract
-#   Ubuntu:  sudo apt install tesseract-ocr
-#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
-#
-# Run:  pip install -r requirements.txt
-#       python -m spacy download en_core_web_sm   # only if ENABLE_NAME_DETECTION
-#       uvicorn blur_server:app --port 8788
-
 import base64
 import math
 import re
@@ -51,9 +39,7 @@ _face_detector = _mp_face_detection.FaceDetection(
     model_selection=0, min_detection_confidence=0.5
 )
 
-# NER for names is optional: it's an extra ~50MB model + dependency, and
-# for a lot of use cases the structured patterns below cover what you
-# actually care about. Flip this on if you want name detection too.
+# Name detection for future :|
 ENABLE_NAME_DETECTION = False
 _nlp = None
 if ENABLE_NAME_DETECTION:
@@ -77,8 +63,7 @@ PII_PATTERNS = {
     "credit_card": r"\b(?:\d[ -]*?){13,19}\b",
 }
 
-# Known API key / token formats. Add more as you run into them —
-# most providers document their own prefix format.
+# Known API key / token formats. Add more as you run into them
 API_KEY_PATTERNS = {
     "aws_key": r"AKIA[0-9A-Z]{16}",
     "github_token": r"gh[pousr]_[A-Za-z0-9]{36,}",

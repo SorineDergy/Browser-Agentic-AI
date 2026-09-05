@@ -1,8 +1,14 @@
 // background.js — the coordinator/hub. Everything routes through here.
 // Message shape convention: { type: string, payload: any }
+//
+// This implements the observe -> decide -> act -> re-observe loop from
+// AGENT_PROTOCOL.md, replacing the earlier one-shot "execute a whole
+// action list" design. See that doc for the full request/response
+// contract this code implements.
 
-const SERVER_URL = "http://localhost:8787/agent"; // swap for your real server endpoint sometime in 800 years
-const BLUR_SERVER_URL = "http://localhost:8788/blur"; // Python mediapipe+teserract service
+const SERVER_URL = "http://localhost:8787/agent"; // swap for your real endpoint
+const BLUR_SERVER_URL = "http://localhost:8788/blur"; // your local Python blur service
+const MAX_STEPS = 15; // circuit breaker so a confused model can't loop forever
 
 async function blurImageLocally(dataUrl) {
   const res = await fetch(BLUR_SERVER_URL, {
@@ -55,11 +61,20 @@ function extractInteractiveElements() {
 
 function dispatchAction(action) {
   // Runs inside the target page via chrome.scripting.executeScript.
+  // Handles click/type/scroll. navigate/wait are handled outside the page
+  // in executeSingleAction, since they don't need page-context access.
   function fireClick(el) {
     ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) =>
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }))
     );
   }
+
+  if (action.type === "scroll") {
+    const amount = action.amount || 500;
+    window.scrollBy(0, action.direction === "up" ? -amount : amount);
+    return { ok: true, action };
+  }
+
   const el = action.selector ? document.querySelector(action.selector) : null;
   if (action.type === "click" && el) {
     el.scrollIntoView({ block: "center" });
@@ -72,65 +87,166 @@ function dispatchAction(action) {
   return { ok: !!el, action };
 }
 
-async function executeActions(tabId, actions) {
-  const results = [];
-  for (const action of actions) {
-    if (action.type === "navigate") {
-      await chrome.tabs.update(tabId, { url: action.url });
-      results.push({ ok: true, action });
-      continue;
-    }
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: dispatchAction,
-      args: [action],
-    });
-    results.push(result);
-    // small delay between actions so the page can react before the next one
-    await new Promise((r) => setTimeout(r, 300));
+async function executeSingleAction(tabId, action) {
+  if (action.type === "navigate") {
+    await chrome.tabs.update(tabId, { url: action.url });
+    await new Promise((r) => setTimeout(r, 1000)); // give navigation time to start
+    return { ok: true, action };
   }
-  return results;
+  if (action.type === "wait") {
+    await new Promise((r) => setTimeout(r, action.ms || 500));
+    return { ok: true, action };
+  }
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: dispatchAction,
+    args: [action],
+  });
+  await new Promise((r) => setTimeout(r, 300)); // let the page react before re-observing
+  return result;
 }
 
-// --- Main flow ----------------------------------------------------------
+// --- One observe/decide round-trip --------------------------------------
 
-async function handleUserRequest(payload, sendResponse) {
+async function observe(tabId, userGoal, stepNumber, history) {
+  const screenshotDataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
+  const blurredDataUrl = await blurImageLocally(screenshotDataUrl);
+
+  const tab = await chrome.tabs.get(tabId);
+  const [{ result: elements }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: extractInteractiveElements,
+  });
+
+  const observation = {
+    user_goal: userGoal,
+    current_url: tab.url,
+    step_number: stepNumber,
+    max_steps: MAX_STEPS,
+    screenshot: blurredDataUrl, // blurred only — raw screenshot never leaves this function
+    interactive_elements: elements,
+    history,
+  };
+
+  const res = await fetch(SERVER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(observation),
+  });
+  if (!res.ok) throw new Error(`Reasoning server returned ${res.status}`);
+  return res.json(); // the step_type decision object, per AGENT_PROTOCOL.md
+}
+
+// --- Broadcasting progress to the side panel ----------------------------
+// The side panel isn't guaranteed to have a listener open (e.g. if closed),
+// so these are fire-and-forget: swallow the "no receiver" rejection.
+
+function broadcastStatus(payload) {
+  chrome.runtime.sendMessage({ type: "AGENT_STATUS", payload }).catch(() => {});
+}
+
+// --- needs_confirmation handshake ---------------------------------------
+// The loop pauses mid-flight and waits for the side panel to send back a
+// USER_CONFIRM_ACTION message with the same requestId before continuing.
+
+const pendingConfirmations = new Map();
+
+function waitForConfirmation(requestId) {
+  return new Promise((resolve) => {
+    pendingConfirmations.set(requestId, resolve);
+  });
+}
+
+// --- The main loop: observe -> decide -> act -> re-observe --------------
+
+async function runAgentLoop(userGoal, sendResponse) {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabId = tab.id;
+    const history = [];
 
-    const screenshotDataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
+    for (let step = 1; step <= MAX_STEPS; step++) {
+      broadcastStatus({ kind: "observing", step });
+      const decision = await observe(tabId, userGoal, step, history);
 
-    const blurredDataUrl = await blurImageLocally(screenshotDataUrl);
+      if (decision.step_type === "done") {
+        broadcastStatus({ kind: "done", step, summary: decision.summary });
+        sendResponse({ ok: true, outcome: "done", summary: decision.summary });
+        return;
+      }
 
-    const [{ result: elements }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: extractInteractiveElements,
-    });
+      if (decision.step_type === "blocked") {
+        broadcastStatus({ kind: "blocked", step, summary: decision.summary });
+        sendResponse({ ok: true, outcome: "blocked", summary: decision.summary });
+        return;
+      }
 
-    const serverResponse = await fetch(SERVER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userText: payload.text,
-        image: blurredDataUrl, // blurred image only — raw one never leaves the device
-        elements,
-        url: tab.url,
-      }),
-    });
-    const { actions } = await serverResponse.json();
+      if (decision.step_type === "needs_input") {
+        // Simplification for the skeleton: the loop ends here and surfaces
+        // the model's question. Resuming the SAME loop with the user's
+        // answer (rather than starting a fresh request) is a reasonable
+        // next improvement, but needs a bit more state-threading than
+        // this skeleton does today.
+        broadcastStatus({ kind: "needs_input", step, question: decision.question });
+        sendResponse({ ok: true, outcome: "needs_input", question: decision.question });
+        return;
+      }
 
-    const results = await executeActions(tab.id, actions);
-    sendResponse({ ok: true, actions, results });
+      if (decision.step_type === "needs_confirmation") {
+        const requestId = `${Date.now()}-${step}`;
+        broadcastStatus({
+          kind: "needs_confirmation",
+          step,
+          action: decision.action,
+          why: decision.why,
+          requestId,
+        });
+
+        const approved = await waitForConfirmation(requestId);
+        if (!approved) {
+          broadcastStatus({ kind: "cancelled", step });
+          sendResponse({ ok: true, outcome: "cancelled" });
+          return;
+        }
+
+        const result = await executeSingleAction(tabId, decision.action);
+        history.push({ step, action: decision.action, result: result.ok ? "ok" : "failed" });
+        broadcastStatus({ kind: "action_executed", step, action: decision.action, result });
+        continue;
+      }
+
+      if (decision.step_type === "action") {
+        const result = await executeSingleAction(tabId, decision.action);
+        history.push({ step, action: decision.action, result: result.ok ? "ok" : "failed" });
+        broadcastStatus({ kind: "action_executed", step, action: decision.action, result });
+        continue;
+      }
+
+      throw new Error(`Unknown step_type from reasoning server: "${decision.step_type}"`);
+    }
+
+    sendResponse({ ok: false, error: `Stopped after ${MAX_STEPS} steps without finishing.` });
   } catch (err) {
-    console.error("Agent request failed:", err);
+    console.error("Agent loop failed:", err);
     sendResponse({ ok: false, error: String(err) });
   }
 }
 
+// --- Message routing ------------------------------------------------------
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "USER_REQUEST") {
-    handleUserRequest(message.payload, sendResponse);
-    return true; // keep the message channel open for async sendResponse
+    runAgentLoop(message.payload.text, sendResponse);
+    return true; // keep the message channel open for the async sendResponse
+  }
+
+  if (message.type === "USER_CONFIRM_ACTION") {
+    const resolve = pendingConfirmations.get(message.payload.requestId);
+    if (resolve) {
+      resolve(message.payload.approved);
+      pendingConfirmations.delete(message.payload.requestId);
+    }
+    return false; // synchronous, no response needed
   }
 });
 
@@ -138,7 +254,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ tabId: tab.id });
 });
-
-
-
-// SOMEONE SEND HELP, IDK ANY JAVASCRIPT 

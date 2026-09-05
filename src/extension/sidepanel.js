@@ -11,6 +11,18 @@ function addEntry(text, cls = "") {
   log.scrollTop = log.scrollHeight;
 }
 
+function describeAction(action) {
+  if (!action) return "(no action)";
+  switch (action.type) {
+    case "click": return `click ${action.selector}`;
+    case "type": return `type into ${action.selector}`;
+    case "navigate": return `navigate to ${action.url}`;
+    case "scroll": return `scroll ${action.direction}`;
+    case "wait": return `wait ${action.ms}ms`;
+    default: return action.type;
+  }
+}
+
 function sendRequest(text) {
   if (!text.trim()) return;
   addEntry(text, "user");
@@ -25,14 +37,61 @@ function sendRequest(text) {
     }
     if (!response.ok) {
       addEntry(`Error: ${response.error}`, "error");
-      return;
     }
-    const summary = response.actions
-      .map((a) => `${a.type}${a.selector ? " " + a.selector : ""}${a.url ? " " + a.url : ""}`)
-      .join("\n");
-    addEntry(`Did:\n${summary}`);
+    // Step-by-step progress already streamed in via AGENT_STATUS messages
+    // below — the final response here just tells us the loop is over.
   });
 }
+
+// --- Live progress from the agent loop in background.js -----------------
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type !== "AGENT_STATUS") return;
+  const s = message.payload;
+
+  switch (s.kind) {
+    case "observing":
+      addEntry(`Step ${s.step}: looking at the page...`);
+      break;
+
+    case "action_executed":
+      addEntry(
+        `Step ${s.step}: ${describeAction(s.action)} ${s.result.ok ? "✓" : "✗ (element not found)"}`
+      );
+      break;
+
+    case "done":
+      addEntry(`Done: ${s.summary}`);
+      break;
+
+    case "blocked":
+      addEntry(`Stuck: ${s.summary}`, "error");
+      break;
+
+    case "needs_input":
+      addEntry(`Question: ${s.question}`);
+      break;
+
+    case "needs_confirmation": {
+      // Simple synchronous confirm() for the skeleton — fine for a first
+      // pass, though a custom in-panel prompt would feel less jarring
+      // than a native browser dialog once this feels worth polishing.
+      const approved = window.confirm(
+        `${s.why}\n\nAction: ${describeAction(s.action)}\n\nProceed?`
+      );
+      chrome.runtime.sendMessage({
+        type: "USER_CONFIRM_ACTION",
+        payload: { requestId: s.requestId, approved },
+      });
+      addEntry(approved ? `Confirmed step ${s.step}` : `Cancelled step ${s.step}`);
+      break;
+    }
+
+    case "cancelled":
+      addEntry(`Stopped — you cancelled step ${s.step}`);
+      break;
+  }
+});
 
 sendBtn.addEventListener("click", () => sendRequest(textInput.value));
 textInput.addEventListener("keydown", (e) => {
@@ -40,8 +99,6 @@ textInput.addEventListener("keydown", (e) => {
 });
 
 // --- Voice input via the Web Speech API ---------------------------------
-// Note: SpeechRecognition needs to run in a page context with mic
-// permission granted; side panels support this like a normal page.
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognizing = false;
