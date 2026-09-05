@@ -1,12 +1,6 @@
 """
-test_blur.py — send a local image to the blur service and save the result.
-
-Usage:
-    python test_blur.py path/to/your/test_image.jpg
-
-Put a test image somewhere with a face in it and/or some visible text
-containing a fake email/phone number, and check the output image to see
-if those regions actually got blurred.
+This is to test the local blur service!
+Usage:  python test_blur.py path/to/your/test_image.jpg
 """
 
 import base64

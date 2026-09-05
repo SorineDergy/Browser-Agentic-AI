@@ -124,6 +124,15 @@ def contains_pii(text: str) -> bool:
 
     return False
 
+def blur_kernel_for_box(x1, y1, x2, y2, strength=0.5):
+    """Kernel size scales with the box's own dimensions, so bigger
+    faces/regions get proportionally more blur, not a fixed amount."""
+    w, h = x2 - x1, y2 - y1
+    k = int(min(w, h) * strength)
+    k = max(k, 15)          # floor, so tiny boxes still get a real blur
+    if k % 2 == 0:
+        k += 1              # must be odd
+    return (k, k)
 
 def apply_blur(image, x1, y1, x2, y2, kernel_size=(101, 101)):
     x1, y1 = max(0, x1), max(0, y1)
@@ -167,7 +176,7 @@ def blur_pii_and_faces(image: np.ndarray) -> np.ndarray:
             y1 = int(box.ymin * h)
             x2 = x1 + int(box.width * w)
             y2 = y1 + int(box.height * h)
-            apply_blur(image, x1, y1, x2, y2, kernel_size=(51, 51))
+            apply_blur(image, x1, y1, x2, y2, kernel_size=blur_kernel_for_box(x1, y1, x2, y2))
 
     return image
 

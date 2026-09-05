@@ -13,7 +13,7 @@
 - CORSMiddleware, from fastapi.middleware.cors -> lets us handle Cross origin resource sharing, allows FastAPI to safely accept requests from a frontend hosted on a different domain, port or protocol
 - Output, from pytesseract -> provides a helper class used to change the format and data type of the OCR results returned by the functions
 - uvicorn[standard] -> used to open port 8788 and listens for incoming TCP connections, speaks the HTTP protocol and hands each incoming request off to FastAPI
-- BaseModel, from pydantic -> 
+- BaseModel, from pydantic -> core class used to define schemas, structure data and enforce strict type validation
 
 
 # IMPORTANT
@@ -32,8 +32,11 @@ MacOS: ```brew install tesseract```
 
 # Noteworthy stuff:
 
+## Mediapipe version 0.10.21
+We are staying back on this version because the newer versions (0.10.31+) deprecated and removed the mp.solutions API
+
 ## Uvicorn
-while this library is in the requirments.txt, its not directly imported into the python script as the relationship runs the other way, as in uvicorn imports the file instead of the file importing.
+While this library is in the requirments.txt, its not directly imported into the python script as the relationship runs the other way, as in uvicorn imports the file instead of the file importing.
 
 To start the service: ```uvicorn blur_server:app --port 8788``` in ```blur_service/```
 <br>
