@@ -117,7 +117,6 @@ function buildParts(observation) {
     history.length ? JSON.stringify(history, null, 2) : "(none yet — this is the first step)",
   ].join("\n");
 
-  // Image first, same reasoning as the Claude adapter: models generally
   // do better with visual context established before the text describing it.
   return [
     { inlineData: { mimeType, data: base64Data } },
@@ -167,7 +166,6 @@ async function getNextStep(observation) {
     contents: [{ role: "user", parts: buildParts(observation) }],
     tools: [{ functionDeclarations: [DECISION_FUNCTION] }],
     // Forcing ANY + naming the one allowed function is Gemini's
-    // equivalent of Claude's tool_choice: {type: "tool", name: "..."} —
     // it guarantees a function call instead of a free-text reply.
     toolConfig: {
       functionCallingConfig: {
