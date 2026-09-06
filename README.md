@@ -20,15 +20,14 @@
    uvicorn blur_server:app --port 8788
 ```
 
-2. Starting the reasoning server
-Add your own enviroment variable "GEMINI_API_KEY=[GEMINI-API-KEY]" in a .env file, and store this file in server/
+2. Starting the reasoning server <br>
+3. Add your own enviroment variable "GEMINI_API_KEY=[GEMINI-API-KEY]" in a .env file, and store this file in server/ <br>
 Get one at "https://aistudio.google.com/app/apikey"
 
 ```
    cd server/
    npm install
    npm start
-
 ```
 
 3. Extension
