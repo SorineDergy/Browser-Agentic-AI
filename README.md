@@ -39,4 +39,4 @@ Import the unpacked "extension/" folder into Chrome using developer mode
 
 4. Use the extension
 
-Go to a webpage like google.com or a search engine of your choice, do NOT start at the default chrome:// webpage as this extension cannot access that.
+Go to a webpage like google.com or a search engine of your choice, do NOT start at the default chrome:// webpage as this extension cannot access that. This is something that cannot be conveniently fixed as Chrome does not easily allow extensions too access chrome:// because of security.
