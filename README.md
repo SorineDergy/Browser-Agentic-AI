@@ -21,9 +21,8 @@
 ```
 
 2. Starting the reasoning server
-### Add your own enviroment variable: export GEMINI_API_KEY=[GEMINI-API-KEY]
-### This above methord is for linux^^ may be different for other Operating systems
-### Get one at "https://aistudio.google.com/app/apikey"
+Add your own enviroment variable "GEMINI_API_KEY=[GEMINI-API-KEY]" in a .env file, and store this file in server/
+Get one at "https://aistudio.google.com/app/apikey"
 
 ```
    cd server/
