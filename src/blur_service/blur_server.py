@@ -58,12 +58,12 @@ PII_PATTERNS = {
     "phone": r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",
     "ssn_or_id": r"\b\d{3}-\d{2}-\d{4}\b",
     # Card numbers: 13-19 digits, optionally grouped with spaces/dashes.
-    # This is deliberately loose — the Luhn check below does the real
-    # filtering, so a wide regex here just gives it candidates to check.
+    # This is deliberately loose — the Luhn check below does the real filtering
+    # So a wide regex here just gives it candidates to check.
     "credit_card": r"\b(?:\d[ -]*?){13,19}\b",
 }
 
-# Known API key / token formats. Add more as you run into them
+# Known API key / token formats. Add more as you run into them >:c
 API_KEY_PATTERNS = {
     "aws_key": r"AKIA[0-9A-Z]{16}",
     "github_token": r"gh[pousr]_[A-Za-z0-9]{36,}",

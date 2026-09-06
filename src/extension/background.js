@@ -2,9 +2,6 @@
 // Message shape convention: { type: string, payload: any }
 //
 // This implements the observe -> decide -> act -> re-observe loop from
-// AGENT_PROTOCOL.md, replacing the earlier one-shot "execute a whole
-// action list" design. See that doc for the full request/response
-// contract this code implements.
 
 const SERVER_URL = "http://localhost:8787/agent"; // swap for your real endpoint
 const BLUR_SERVER_URL = "http://localhost:8788/blur"; // your local Python blur service
