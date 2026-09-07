@@ -1,7 +1,4 @@
 // background.js — the coordinator/hub. Everything routes through here.
-// Message shape convention: { type: string, payload: any }
-//
-// This implements the observe -> decide -> act -> re-observe loop from
 
 const SERVER_URL = "http://localhost:8787/agent"; // swap for your real endpoint
 const BLUR_SERVER_URL = "http://localhost:8788/blur"; // your local Python blur service
@@ -133,11 +130,19 @@ async function observe(tabId, userGoal, stepNumber, history) {
   if (!res.ok) throw new Error(`Reasoning server returned ${res.status}`);
   return res.json(); // the step_type decision object, per AGENT_PROTOCOL.md
 }
+let keepAliveInterval = null;
 
-// --- Broadcasting progress to the side panel ----------------------------
-// The side panel isn't guaranteed to have a listener open (e.g. if closed),
-// so these are fire-and-forget: swallow the "no receiver" rejection.
+function startKeepAlive() {
+  if (keepAliveInterval) return;
+  keepAliveInterval = setInterval(() => {
+    chrome.runtime.getPlatformInfo(() => {}); // trivial call, result unused
+  }, 20_000);
+}
 
+function stopKeepAlive() {
+  clearInterval(keepAliveInterval);
+  keepAliveInterval = null;
+}
 function broadcastStatus(payload) {
   chrome.runtime.sendMessage({ type: "AGENT_STATUS", payload }).catch(() => {});
 }
@@ -153,10 +158,8 @@ function waitForConfirmation(requestId) {
     pendingConfirmations.set(requestId, resolve);
   });
 }
-
-// --- The main loop: observe -> decide -> act -> re-observe --------------
-
-async function runAgentLoop(userGoal, sendResponse) {
+async function runAgentLoop(userGoal) {
+  startKeepAlive();
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = tab.id;
@@ -168,24 +171,17 @@ async function runAgentLoop(userGoal, sendResponse) {
 
       if (decision.step_type === "done") {
         broadcastStatus({ kind: "done", step, summary: decision.summary });
-        sendResponse({ ok: true, outcome: "done", summary: decision.summary });
         return;
       }
 
       if (decision.step_type === "blocked") {
         broadcastStatus({ kind: "blocked", step, summary: decision.summary });
-        sendResponse({ ok: true, outcome: "blocked", summary: decision.summary });
         return;
       }
 
       if (decision.step_type === "needs_input") {
-        // Simplification for the skeleton: the loop ends here and surfaces
-        // the model's question. Resuming the SAME loop with the user's
-        // answer (rather than starting a fresh request) is a reasonable
-        // next improvement, but needs a bit more state-threading than
-        // this skeleton does today.
+
         broadcastStatus({ kind: "needs_input", step, question: decision.question });
-        sendResponse({ ok: true, outcome: "needs_input", question: decision.question });
         return;
       }
 
@@ -202,7 +198,6 @@ async function runAgentLoop(userGoal, sendResponse) {
         const approved = await waitForConfirmation(requestId);
         if (!approved) {
           broadcastStatus({ kind: "cancelled", step });
-          sendResponse({ ok: true, outcome: "cancelled" });
           return;
         }
 
@@ -222,10 +217,12 @@ async function runAgentLoop(userGoal, sendResponse) {
       throw new Error(`Unknown step_type from reasoning server: "${decision.step_type}"`);
     }
 
-    sendResponse({ ok: false, error: `Stopped after ${MAX_STEPS} steps without finishing.` });
+    broadcastStatus({ kind: "max_steps", step: MAX_STEPS });
   } catch (err) {
     console.error("Agent loop failed:", err);
-    sendResponse({ ok: false, error: String(err) });
+    broadcastStatus({ kind: "error", error: String(err) });
+  } finally {
+    stopKeepAlive();
   }
 }
 
@@ -233,8 +230,9 @@ async function runAgentLoop(userGoal, sendResponse) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "USER_REQUEST") {
-    runAgentLoop(message.payload.text, sendResponse);
-    return true; // keep the message channel open for the async sendResponse
+    runAgentLoop(message.payload.text); // fire-and-forget — see note above runAgentLoop
+    sendResponse({ ok: true }); // just acknowledges receipt, synchronously, right away
+    return false; // no long-lived channel needed anymore
   }
 
   if (message.type === "USER_CONFIRM_ACTION") {
