@@ -29,17 +29,16 @@ function sendRequest(text) {
   textInput.value = "";
   sendBtn.disabled = true;
 
-  chrome.runtime.sendMessage({ type: "USER_REQUEST", payload: { text } }, (response) => {
-    sendBtn.disabled = false;
+  // The response here is just a synchronous "received" acknowledgment —
+  // the actual outcome streams in via AGENT_STATUS broadcasts below,
+  // since a long local-model call can outlive a single response channel
+  // (see background.js for why). Send stays disabled until a broadcast
+  // reports the loop has actually ended.
+  chrome.runtime.sendMessage({ type: "USER_REQUEST", payload: { text } }, () => {
     if (chrome.runtime.lastError) {
       addEntry(`Error: ${chrome.runtime.lastError.message}`, "error");
-      return;
+      sendBtn.disabled = false;
     }
-    if (!response.ok) {
-      addEntry(`Error: ${response.error}`, "error");
-    }
-    // Step-by-step progress already streamed in via AGENT_STATUS messages
-    // below — the final response here just tells us the loop is over.
   });
 }
 

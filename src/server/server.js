@@ -1,17 +1,4 @@
-// server.js — reasoning server. Speaks the per-step observe/decide
-// contract from AGENT_PROTOCOL.md.
-//
-// Run: npm install && npm start
-//
-// If GEMINI_API_KEY is set, real requests go to Gemini (see
-// providers/gemini.js). If it's not set, falls back to the scripted
-// stub with test hooks — handy for testing the extension's loop
-// mechanics without spending API calls.
-//
-// Test hooks (only active without an API key set):
-//   "confirm ..."  -> forces a needs_confirmation step on step 1
-//   "ask ..."      -> forces a needs_input step on step 1
-//   anything else  -> tries to click a matching element, then reports done
+
 
 import "dotenv/config";
 import express from "express";
@@ -24,7 +11,7 @@ const USE_REAL_MODEL = !!process.env.GEMINI_API_KEY;
 if (USE_REAL_MODEL) {
   console.log("GEMINI_API_KEY found — using the real Gemini adapter.");
 } else {
-  console.log("No GEMINI_API_KEY set — using the scripted test stub. See README for test hooks.");
+  console.log("No GEMINI_API_KEY set — using the scripted test stub.");
 }
 
 app.post("/agent", async (req, res) => {
@@ -37,8 +24,6 @@ app.post("/agent", async (req, res) => {
       return res.json(decision);
     } catch (err) {
       console.error("Gemini adapter failed:", err);
-      // Fail as a normal "blocked" step rather than a raw 500 — the
-      // extension's loop already knows how to end gracefully on that.
       return res.json({
         step_type: "blocked",
         reasoning: "reasoning model call failed",
