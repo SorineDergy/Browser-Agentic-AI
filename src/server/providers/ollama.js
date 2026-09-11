@@ -12,7 +12,7 @@ import { Agent, setGlobalDispatcher } from "undici";
 setGlobalDispatcher(new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 })); // 10 minutes
 
 const OLLAMA_URL = "http://localhost:11434/api/chat";
-const MODEL = "gemma3:12b"; // swap for whatever vision-capable model you've pulled
+const MODEL = "gemma4:12b"; // swap for whatever vision-capable model you've pulled
 
 const SYSTEM_PROMPT = `You control a web browser on behalf of a user, one step at a time.
 
