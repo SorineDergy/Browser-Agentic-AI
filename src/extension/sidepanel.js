@@ -3,6 +3,11 @@ const textInput = document.getElementById("textInput");
 const sendBtn = document.getElementById("sendBtn");
 const micBtn = document.getElementById("micBtn");
 
+// When set, the next thing the user types/speaks is an ANSWER to a
+// question the agent asked mid-loop, not a brand new request. Cleared
+// once that answer is sent.
+let pendingQuestionRequestId = null;
+
 function addEntry(text, cls = "") {
   const div = document.createElement("div");
   div.className = `entry ${cls}`.trim();
@@ -23,8 +28,28 @@ function describeAction(action) {
   }
 }
 
+// Called whenever the agent loop has genuinely stopped and it's safe to
+// let the user start something new (a fresh request, or an answer).
+function reenableInput() {
+  sendBtn.disabled = false;
+  textInput.placeholder = "Ask the agent to do something...";
+}
+
 function sendRequest(text) {
   if (!text.trim()) return;
+
+  if (pendingQuestionRequestId) {
+    // We're mid-loop, answering a question — route to USER_ANSWER and
+    // resume the SAME loop, instead of starting a brand new one.
+    const requestId = pendingQuestionRequestId;
+    pendingQuestionRequestId = null;
+    addEntry(text, "user");
+    textInput.value = "";
+    sendBtn.disabled = true;
+    chrome.runtime.sendMessage({ type: "USER_ANSWER", payload: { requestId, answer: text } });
+    return;
+  }
+
   addEntry(text, "user");
   textInput.value = "";
   sendBtn.disabled = true;
@@ -33,11 +58,11 @@ function sendRequest(text) {
   // the actual outcome streams in via AGENT_STATUS broadcasts below,
   // since a long local-model call can outlive a single response channel
   // (see background.js for why). Send stays disabled until a broadcast
-  // reports the loop has actually ended.
+  // reports the loop has actually ended (or is paused waiting on us).
   chrome.runtime.sendMessage({ type: "USER_REQUEST", payload: { text } }, () => {
     if (chrome.runtime.lastError) {
       addEntry(`Error: ${chrome.runtime.lastError.message}`, "error");
-      sendBtn.disabled = false;
+      reenableInput();
     }
   });
 }
@@ -61,14 +86,26 @@ chrome.runtime.onMessage.addListener((message) => {
 
     case "done":
       addEntry(`Done: ${s.summary}`);
+      reenableInput();
       break;
 
     case "blocked":
       addEntry(`Stuck: ${s.summary}`, "error");
+      reenableInput();
       break;
 
     case "needs_input":
+      // Loop is now PAUSED, waiting on us — not ended. Remember the
+      // requestId so the next thing typed gets routed back as an answer.
       addEntry(`Question: ${s.question}`);
+      pendingQuestionRequestId = s.requestId;
+      sendBtn.disabled = false;
+      textInput.placeholder = "Type your answer...";
+      textInput.focus();
+      break;
+
+    case "answer_received":
+      addEntry(`You answered: ${s.answer}`, "user");
       break;
 
     case "needs_confirmation": {
@@ -88,6 +125,17 @@ chrome.runtime.onMessage.addListener((message) => {
 
     case "cancelled":
       addEntry(`Stopped — you cancelled step ${s.step}`);
+      reenableInput();
+      break;
+
+    case "max_steps":
+      addEntry(`Stopped after ${s.step} steps without finishing.`, "error");
+      reenableInput();
+      break;
+
+    case "error":
+      addEntry(`Error: ${s.error}`, "error");
+      reenableInput();
       break;
   }
 });
@@ -98,6 +146,8 @@ textInput.addEventListener("keydown", (e) => {
 });
 
 // --- Voice input via the Web Speech API ---------------------------------
+// Works for both a fresh request and answering a pending question — it
+// just calls sendRequest(), same as typing does.
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognizing = false;

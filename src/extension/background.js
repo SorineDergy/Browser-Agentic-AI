@@ -1,4 +1,10 @@
 // background.js — the coordinator/hub. Everything routes through here.
+// Message shape convention: { type: string, payload: any }
+//
+// This implements the observe -> decide -> act -> re-observe loop from
+// AGENT_PROTOCOL.md, replacing the earlier one-shot "execute a whole
+// action list" design. See that doc for the full request/response
+// contract this code implements.
 
 const SERVER_URL = "http://localhost:8787/agent"; // swap for your real endpoint
 const BLUR_SERVER_URL = "http://localhost:8788/blur"; // your local Python blur service
@@ -130,6 +136,16 @@ async function observe(tabId, userGoal, stepNumber, history) {
   if (!res.ok) throw new Error(`Reasoning server returned ${res.status}`);
   return res.json(); // the step_type decision object, per AGENT_PROTOCOL.md
 }
+
+// --- Keeping the service worker alive during a slow model call ----------
+// MV3 service workers can be terminated by Chrome independently of
+// whether a fetch is still pending — a bare `await fetch(...)` doesn't
+// reliably count as "activity" that resets Chrome's own timers. A local
+// model call can take minutes (see providers/ollama.js), which is long
+// enough to hit this. Periodically calling a trivial extension API
+// resets the idle clock and keeps the worker (and the in-flight request)
+// alive for the duration of the loop.
+
 let keepAliveInterval = null;
 
 function startKeepAlive() {
@@ -143,6 +159,11 @@ function stopKeepAlive() {
   clearInterval(keepAliveInterval);
   keepAliveInterval = null;
 }
+
+// --- Broadcasting progress to the side panel ----------------------------
+// The side panel isn't guaranteed to have a listener open (e.g. if closed),
+// so these are fire-and-forget: swallow the "no receiver" rejection.
+
 function broadcastStatus(payload) {
   chrome.runtime.sendMessage({ type: "AGENT_STATUS", payload }).catch(() => {});
 }
@@ -158,6 +179,32 @@ function waitForConfirmation(requestId) {
     pendingConfirmations.set(requestId, resolve);
   });
 }
+
+// --- needs_input handshake -----------------------------------------------
+// Same pattern as confirmations: the loop pauses and waits for a
+// USER_ANSWER message with the matching requestId, then resumes with the
+// answer folded into `history` — rather than ending the loop and
+// discarding everything gathered so far, which is what happened before.
+
+const pendingAnswers = new Map();
+
+function waitForAnswer(requestId) {
+  return new Promise((resolve) => {
+    pendingAnswers.set(requestId, resolve);
+  });
+}
+
+// --- The main loop: observe -> decide -> act -> re-observe --------------
+//
+// Note: this no longer takes/calls a `sendResponse` for its final result.
+// A single long-lived response channel can't survive the service worker
+// being restarted mid-loop (which is exactly what was causing the
+// "message channel closed" error with slow local-model calls) — so the
+// outcome is reported entirely through broadcastStatus() instead, the
+// same mechanism already used for step-by-step progress. Each broadcast
+// is its own independent message, so a worker restart between broadcasts
+// loses nothing already sent.
+
 async function runAgentLoop(userGoal) {
   startKeepAlive();
   try {
@@ -180,9 +227,17 @@ async function runAgentLoop(userGoal) {
       }
 
       if (decision.step_type === "needs_input") {
+        const requestId = `${Date.now()}-${step}`;
+        broadcastStatus({ kind: "needs_input", step, question: decision.question, requestId });
 
-        broadcastStatus({ kind: "needs_input", step, question: decision.question });
-        return;
+        const answer = await waitForAnswer(requestId);
+
+        // A clarification exchange isn't an action, so it gets its own
+        // shape in history (no `action`/`result` fields) — the model
+        // just needs to see the question it asked and what it was told.
+        history.push({ step, question: decision.question, answer });
+        broadcastStatus({ kind: "answer_received", step, answer });
+        continue;
       }
 
       if (decision.step_type === "needs_confirmation") {
@@ -240,6 +295,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (resolve) {
       resolve(message.payload.approved);
       pendingConfirmations.delete(message.payload.requestId);
+    }
+    return false; // synchronous, no response needed
+  }
+
+  if (message.type === "USER_ANSWER") {
+    const resolve = pendingAnswers.get(message.payload.requestId);
+    if (resolve) {
+      resolve(message.payload.answer);
+      pendingAnswers.delete(message.payload.requestId);
     }
     return false; // synchronous, no response needed
   }
