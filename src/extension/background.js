@@ -59,32 +59,123 @@ function extractInteractiveElements() {
   }));
 }
 
+// --- Action execution via chrome.debugger (Chrome DevTools Protocol) ----
+// Synthetic DOM events (MouseEvent, dispatchEvent) always have
+// event.isTrusted === false — some sites (bot-detection, React-controlled
+// inputs) specifically check that and silently ignore untrusted events.
+// chrome.debugger attaches the real DevTools protocol to the tab and
+// dispatches input the same way actual DevTools does, indistinguishable
+// from a real user action. Tradeoff: Chrome shows a persistent
+// "<extension> is debugging this browser" banner for the whole session,
+// and you can't have real DevTools open on the same tab at the same time.
+
+const PROTOCOL_VERSION = "1.3";
+const attachedTabs = new Set();
+
+function attachDebugger(tabId) {
+  return new Promise((resolve, reject) => {
+    if (attachedTabs.has(tabId)) return resolve();
+    chrome.debugger.attach({ tabId }, PROTOCOL_VERSION, () => {
+      if (chrome.runtime.lastError) {
+        // Common cause: real DevTools is already open on this tab —
+        // Chrome only allows one debugger client attached at a time.
+        return reject(new Error(`chrome.debugger.attach failed: ${chrome.runtime.lastError.message}`));
+      }
+      attachedTabs.add(tabId);
+      resolve();
+    });
+  });
+}
+
+function detachDebugger(tabId) {
+  return new Promise((resolve) => {
+    if (!attachedTabs.has(tabId)) return resolve();
+    chrome.debugger.detach({ tabId }, () => {
+      attachedTabs.delete(tabId);
+      resolve(); // don't reject even if detach errors — we're cleaning up either way
+    });
+  });
+}
+
+// If the user opens real DevTools mid-loop, or closes the tab, Chrome
+// force-detaches us — keep our own bookkeeping in sync with that.
+chrome.debugger.onDetach.addListener((source) => {
+  if (source.tabId != null) attachedTabs.delete(source.tabId);
+});
+
+function sendDebuggerCommand(tabId, method, params) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand({ tabId }, method, params, (result) => {
+      if (chrome.runtime.lastError) {
+        return reject(new Error(`${method} failed: ${chrome.runtime.lastError.message}`));
+      }
+      resolve(result);
+    });
+  });
+}
+
+// Finds the element and returns the viewport-relative pixel coordinates
+// of its center — CDP dispatches input by coordinate, not by selector,
+// so this translation step is necessary. Scrolls the element into view
+// first so the coordinates are actually valid on screen.
+function getElementCenter(selector) {
+  const el = document.querySelector(selector);
+  if (!el) return null;
+  el.scrollIntoView({ block: "center" });
+  const rect = el.getBoundingClientRect();
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
+async function clickViaDebugger(tabId, selector) {
+  const [{ result: center }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: getElementCenter,
+    args: [selector],
+  });
+  if (!center) return { ok: false };
+
+  const { x, y } = center;
+  await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+  await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x,
+    y,
+    button: "left",
+    clickCount: 1,
+  });
+  await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x,
+    y,
+    button: "left",
+    clickCount: 1,
+  });
+  return { ok: true };
+}
+
+async function typeViaDebugger(tabId, selector, text) {
+  // Click first to focus the field for real — Input.insertText types
+  // into whatever currently has focus, it doesn't target a selector itself.
+  const clicked = await clickViaDebugger(tabId, selector);
+  if (!clicked.ok) return { ok: false };
+
+  await sendDebuggerCommand(tabId, "Input.insertText", { text: text || "" });
+  return { ok: true };
+}
+
+// --- scroll only — click/type moved to the debugger-based functions above
+
 function dispatchAction(action) {
   // Runs inside the target page via chrome.scripting.executeScript.
-  // Handles click/type/scroll. navigate/wait are handled outside the page
-  // in executeSingleAction, since they don't need page-context access.
-  function fireClick(el) {
-    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) =>
-      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }))
-    );
-  }
-
+  // Only scroll is left here: it doesn't hit isTrusted checks the way
+  // clicks/typing can, so plain JS is fine and avoids an unnecessary
+  // debugger round-trip for something this simple.
   if (action.type === "scroll") {
     const amount = action.amount || 500;
     window.scrollBy(0, action.direction === "up" ? -amount : amount);
     return { ok: true, action };
   }
-
-  const el = action.selector ? document.querySelector(action.selector) : null;
-  if (action.type === "click" && el) {
-    el.scrollIntoView({ block: "center" });
-    fireClick(el);
-  } else if (action.type === "type" && el) {
-    el.focus();
-    el.value = action.text || "";
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-  return { ok: !!el, action };
+  return { ok: false, action };
 }
 
 async function executeSingleAction(tabId, action) {
@@ -97,6 +188,17 @@ async function executeSingleAction(tabId, action) {
     await new Promise((r) => setTimeout(r, action.ms || 500));
     return { ok: true, action };
   }
+  if (action.type === "click") {
+    const result = await clickViaDebugger(tabId, action.selector);
+    await new Promise((r) => setTimeout(r, 300)); // let the page react before re-observing
+    return { ...result, action };
+  }
+  if (action.type === "type") {
+    const result = await typeViaDebugger(tabId, action.selector, action.text);
+    await new Promise((r) => setTimeout(r, 300));
+    return { ...result, action };
+  }
+
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
     func: dispatchAction,
@@ -207,9 +309,11 @@ function waitForAnswer(requestId) {
 
 async function runAgentLoop(userGoal) {
   startKeepAlive();
+  let tabId;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const tabId = tab.id;
+    tabId = tab.id;
+    await attachDebugger(tabId); // shows the "is debugging this browser" banner for this tab
     const history = [];
 
     for (let step = 1; step <= MAX_STEPS; step++) {
@@ -278,6 +382,7 @@ async function runAgentLoop(userGoal) {
     broadcastStatus({ kind: "error", error: String(err) });
   } finally {
     stopKeepAlive();
+    if (tabId != null) await detachDebugger(tabId);
   }
 }
 
