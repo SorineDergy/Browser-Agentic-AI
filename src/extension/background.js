@@ -92,6 +92,7 @@ function detachDebugger(tabId) {
     if (!attachedTabs.has(tabId)) return resolve();
     chrome.debugger.detach({ tabId }, () => {
       attachedTabs.delete(tabId);
+      lastCursorPosition.delete(tabId);
       resolve(); // don't reject even if detach errors — we're cleaning up either way
     });
   });
@@ -126,6 +127,64 @@ function getElementCenter(selector) {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }
 
+// Tracks where the simulated cursor last was, per tab — a curved path
+// needs a real starting point, not just the destination. Without this,
+// the first move of every click would still be a straight teleport.
+const lastCursorPosition = new Map();
+
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+// Builds a slightly-curved, jittered path between two points instead of
+// a straight line — a quadratic Bezier with a randomly-offset control
+// point, sampled into N intermediate steps, each nudged by a small
+// random jitter (except the final point, which lands exactly on target).
+// This is a real, if simple, improvement over a single teleport-to-target
+// mouseMoved event — see the conversation this came from for why a
+// straight line (or a single jump) is a much easier tell than this.
+function buildCurvedPath(start, end, steps = 18) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const distance = Math.hypot(dx, dy);
+
+  // Control point offset perpendicular to the straight line, scaled by
+  // distance so short moves don't curve wildly and long moves don't stay
+  // suspiciously straight.
+  const curveStrength = randomBetween(0.15, 0.35) * distance * (Math.random() < 0.5 ? -1 : 1);
+  const midX = (start.x + end.x) / 2 - (dy / (distance || 1)) * curveStrength;
+  const midY = (start.y + end.y) / 2 + (dx / (distance || 1)) * curveStrength;
+
+  const points = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    // Quadratic Bezier: (1-t)^2 * start + 2(1-t)t * control + t^2 * end
+    const bx = (1 - t) ** 2 * start.x + 2 * (1 - t) * t * midX + t ** 2 * end.x;
+    const by = (1 - t) ** 2 * start.y + 2 * (1 - t) * t * midY + t ** 2 * end.y;
+    const isLast = i === steps;
+    points.push({
+      x: isLast ? end.x : bx + randomBetween(-2, 2),
+      y: isLast ? end.y : by + randomBetween(-2, 2),
+    });
+  }
+  return points;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function moveMouseAlongPath(tabId, path) {
+  for (const point of path) {
+    await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: point.x,
+      y: point.y,
+    });
+    await sleep(randomBetween(6, 18)); // real movement isn't instant between frames either
+  }
+}
+
 async function clickViaDebugger(tabId, selector) {
   const [{ result: center }] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -134,8 +193,15 @@ async function clickViaDebugger(tabId, selector) {
   });
   if (!center) return { ok: false };
 
+  const start = lastCursorPosition.get(tabId) || {
+    x: center.x + randomBetween(-120, 120),
+    y: center.y + randomBetween(-120, 120),
+  };
+  const path = buildCurvedPath(start, center);
+  await moveMouseAlongPath(tabId, path);
+  lastCursorPosition.set(tabId, center);
+
   const { x, y } = center;
-  await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
   await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
     type: "mousePressed",
     x,
@@ -143,6 +209,7 @@ async function clickViaDebugger(tabId, selector) {
     button: "left",
     clickCount: 1,
   });
+  await sleep(randomBetween(40, 120)); // real clicks hold the button briefly, not instantly
   await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
     type: "mouseReleased",
     x,
@@ -154,12 +221,34 @@ async function clickViaDebugger(tabId, selector) {
 }
 
 async function typeViaDebugger(tabId, selector, text) {
-  // Click first to focus the field for real — Input.insertText types
-  // into whatever currently has focus, it doesn't target a selector itself.
+  // Click first to focus the field for real.
   const clicked = await clickViaDebugger(tabId, selector);
   if (!clicked.ok) return { ok: false };
 
-  await sendDebuggerCommand(tabId, "Input.insertText", { text: text || "" });
+  // Real per-keystroke events instead of Input.insertText, which pastes
+  // the whole string at once with no keydown/keyup sequence at all —
+  // arguably an even easier tell than a straight-line mouse move, since
+  // there's no keystroke choreography to analyze whatsoever.
+  //
+  // Known limitation: this handles plain printable characters (the
+  // common case for filling in a search box or form field). It doesn't
+  // map special keys (Backspace, Enter, arrows) to their proper CDP key
+  // codes — worth extending if you need those, using a US-keyboard-layout
+  // table the way tools like Puppeteer do internally.
+  for (const char of text || "") {
+    await sendDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+      type: "keyDown",
+      text: char,
+      unmodifiedText: char,
+      key: char,
+    });
+    await sleep(randomBetween(20, 60));
+    await sendDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: char,
+    });
+    await sleep(randomBetween(60, 180)); // human inter-key timing varies a lot, not a fixed cadence
+  }
   return { ok: true };
 }
 
