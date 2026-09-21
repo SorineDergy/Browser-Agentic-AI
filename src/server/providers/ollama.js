@@ -1,7 +1,7 @@
 // Setup:
 //   1. Install Ollama: https://ollama.com/download
 //   2. Pull a vision-capable model:  ollama pull gemma3:12b
-//      (gemma3 sizes 4b and up are multimodal; the 1b size is text-only)
+//      (gemma3/4 sizes 4b and up are multimodal; the 1b size is text-only)
 //   3. Ollama runs a local server automatically on :11434 after install —
 //      nothing else to start.
 //
