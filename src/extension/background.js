@@ -220,21 +220,81 @@ async function clickViaDebugger(tabId, selector) {
   return { ok: true };
 }
 
-async function typeViaDebugger(tabId, selector, text) {
+// Presses a named special key with the specific identifiers CDP/sites
+// expect (plain characters go through the per-char loop in
+// typeViaDebugger instead — this is only for keys with no printable
+// "text", like Enter or Backspace, where sites typically check `key` or
+// `keyCode` rather than inserted text).
+const SPECIAL_KEYS = {
+  Enter: { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
+  Backspace: { key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 },
+  End: { key: "End", code: "End", windowsVirtualKeyCode: 35 },
+};
+
+async function pressSpecialKey(tabId, keyName, modifiers = 0) {
+  const def = SPECIAL_KEYS[keyName];
+  await sendDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+    type: def.text ? "keyDown" : "rawKeyDown",
+    modifiers,
+    ...def,
+  });
+  if (def.text) {
+    await sendDebuggerCommand(tabId, "Input.dispatchKeyEvent", { type: "char", text: def.text, modifiers });
+  }
+  await sleep(randomBetween(20, 60));
+  await sendDebuggerCommand(tabId, "Input.dispatchKeyEvent", { type: "keyUp", modifiers, ...def });
+}
+
+// Reads how many characters are currently in the field, so we know
+// exactly how many Backspaces will actually clear it.
+function getElementValueLength(selector) {
+  const el = document.querySelector(selector);
+  return el && typeof el.value === "string" ? el.value.length : 0;
+}
+
+// Clears existing content before typing — this is what makes "type"
+// behave like a real replace instead of appending onto whatever was
+// already there (leftover text, autofill).
+//
+// NOTE: this used to be Ctrl+A (select all) + Backspace. That didn't
+// actually work in testing — a synthetic CDP Ctrl+A doesn't reliably
+// get interpreted as Chrome's native "select all" command the way a
+// real physical keypress does, so nothing was ever selected and
+// Backspace had nothing to delete. Reading the real length and pressing
+// Backspace exactly that many times sidesteps that entirely: it doesn't
+// depend on Chrome recognizing any modifier combo as a browser command,
+// each Backspace just deletes one character, which is far more reliable.
+async function clearFieldViaDebugger(tabId, selector) {
+  const [{ result: length }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: getElementValueLength,
+    args: [selector],
+  });
+  if (!length) return; // already empty
+
+  await pressSpecialKey(tabId, "End"); // make sure the cursor is after all existing text first
+  for (let i = 0; i < length; i++) {
+    await pressSpecialKey(tabId, "Backspace");
+  }
+}
+
+async function typeViaDebugger(tabId, selector, text, submit = false) {
   // Click first to focus the field for real.
   const clicked = await clickViaDebugger(tabId, selector);
   if (!clicked.ok) return { ok: false };
+
+  await clearFieldViaDebugger(tabId, selector);
 
   // Real per-keystroke events instead of Input.insertText, which pastes
   // the whole string at once with no keydown/keyup sequence at all —
   // arguably an even easier tell than a straight-line mouse move, since
   // there's no keystroke choreography to analyze whatsoever.
   //
-  // Known limitation: this handles plain printable characters (the
-  // common case for filling in a search box or form field). It doesn't
-  // map special keys (Backspace, Enter, arrows) to their proper CDP key
-  // codes — worth extending if you need those, using a US-keyboard-layout
-  // table the way tools like Puppeteer do internally.
+  // Known limitation: this loop still only handles plain printable
+  // characters. Multi-line text (newlines within `text`) and arrow-key
+  // navigation aren't handled — the common cases (clearing a field,
+  // submitting via Enter) are covered by clearFieldViaDebugger and the
+  // `submit` flag below, but this isn't a full keyboard simulation.
   for (const char of text || "") {
     await sendDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
       type: "keyDown",
@@ -249,6 +309,12 @@ async function typeViaDebugger(tabId, selector, text) {
     });
     await sleep(randomBetween(60, 180)); // human inter-key timing varies a lot, not a fixed cadence
   }
+
+  if (submit) {
+    await sleep(randomBetween(80, 200)); // brief pause before submitting, like a real pressing-Enter beat
+    await pressSpecialKey(tabId, "Enter");
+  }
+
   return { ok: true };
 }
 
@@ -283,7 +349,7 @@ async function executeSingleAction(tabId, action) {
     return { ...result, action };
   }
   if (action.type === "type") {
-    const result = await typeViaDebugger(tabId, action.selector, action.text);
+    const result = await typeViaDebugger(tabId, action.selector, action.text, action.submit);
     await new Promise((r) => setTimeout(r, 300));
     return { ...result, action };
   }

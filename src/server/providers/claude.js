@@ -1,14 +1,14 @@
-// gemini.js — adapter between our provider-agnostic contract
-// (see ../AGENT_PROTOCOL.md) and the Gemini API (free tier).
+// claude.js — adapter between our provider-agnostic contract
+// (see ../AGENT_PROTOCOL.md) and the Claude API.
 //
-// Structurally this mirrors claude.js closely — same idea, different
-// vendor's field names. That's the whole point of having designed the
-// contract first: swapping providers is "write one of these files",
-// not "redesign the system."
+// Nothing outside this file needs to know Claude is involved at all —
+// it takes an `observation` object shaped per AGENT_PROTOCOL.md and
+// returns a `decision` object shaped the same way, regardless of what's
+// happening inside. That's what makes swapping providers later a
+// contained change instead of a rewrite.
 
-const MODEL = "gemini-3.6-flash"; // current free-tier, vision-capable model as of testing —
-                                    // verify at https://aistudio.google.com if this changes later
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const MODEL = "claude-sonnet-5"; // fine to swap for claude-opus-5 if you want stronger (slower/pricier) reasoning
 
 const SYSTEM_PROMPT = `You control a web browser on behalf of a user, one step at a time.
 
@@ -24,7 +24,7 @@ You will be shown:
   succeeded
 
 Decide the SINGLE next step toward the goal, then call the
-report_decision function with exactly one step_type:
+report_decision tool with exactly one step_type:
 
 - "action": take one action (click / type / navigate / scroll / wait).
   Only ever use a selector from the provided element list — never invent
@@ -47,10 +47,10 @@ report_decision function with exactly one step_type:
 Always fill in "reasoning" with a brief internal explanation — it's for
 debugging logs, not shown to the user, so it's fine to be terse.`;
 
-const DECISION_FUNCTION = {
+const DECISION_TOOL = {
   name: "report_decision",
   description: "Report the single next step to take toward the user's goal.",
-  parameters: {
+  input_schema: {
     type: "object",
     properties: {
       step_type: {
@@ -93,7 +93,7 @@ const DECISION_FUNCTION = {
   },
 };
 
-function buildParts(observation) {
+function buildUserMessageContent(observation) {
   const {
     user_goal,
     current_url,
@@ -107,7 +107,7 @@ function buildParts(observation) {
   // screenshot arrives as a data URL: "data:image/png;base64,AAAA..."
   const match = screenshot.match(/^data:([^;]+);base64,(.*)$/s);
   if (!match) throw new Error("screenshot is not a valid base64 data URL");
-  const [, mimeType, base64Data] = match;
+  const [, mediaType, base64Data] = match;
 
   const textBlock = [
     `User goal: ${user_goal}`,
@@ -121,77 +121,55 @@ function buildParts(observation) {
     history.length ? JSON.stringify(history, null, 2) : "(none yet — this is the first step)",
   ].join("\n");
 
-  // Image first, same reasoning as the Claude adapter: models generally
-  // do better with visual context established before the text describing it.
+  // Image before text: this is Claude's documented preference for best results.
   return [
-    { inlineData: { mimeType, data: base64Data } },
-    { text: textBlock },
+    { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } },
+    { type: "text", text: textBlock },
   ];
 }
 
-async function callGeminiWithRetry(url, body, maxAttempts = 3) {
-  let lastError;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (response.ok) return response;
-
-    // 503 = server overloaded, 500 = internal error, 429 = rate limited.
-    // All three are transient and worth a short retry — especially
-    // relevant on a free tier, which sees more of these than a paid one.
-    const isTransient = [429, 500, 503].includes(response.status);
-    const errText = await response.text();
-    lastError = new Error(`Gemini API error ${response.status}: ${errText}`);
-
-    if (!isTransient || attempt === maxAttempts) throw lastError;
-
-    const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
-    console.warn(
-      `Gemini returned ${response.status} (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms...`
-    );
-    await new Promise((r) => setTimeout(r, delayMs));
-  }
-  throw lastError;
-}
-
 async function getNextStep(observation) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "GEMINI_API_KEY is not set — export it in your shell or put it in a .env file (see .env.example)"
+      "ANTHROPIC_API_KEY is not set — export it in your shell or put it in a .env file (see .env.example)"
     );
   }
 
-  const response = await callGeminiWithRetry(`${API_URL}?key=${apiKey}`, {
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    contents: [{ role: "user", parts: buildParts(observation) }],
-    tools: [{ functionDeclarations: [DECISION_FUNCTION] }],
-    // Forcing ANY + naming the one allowed function is Gemini's
-    // equivalent of Claude's tool_choice: {type: "tool", name: "..."} —
-    // it guarantees a function call instead of a free-text reply.
-    toolConfig: {
-      functionCallingConfig: {
-        mode: "ANY",
-        allowedFunctionNames: ["report_decision"],
-      },
+  const response = await fetch(ANTHROPIC_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
     },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 1024,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildUserMessageContent(observation) }],
+      tools: [DECISION_TOOL],
+      // Forcing the exact tool (rather than "auto") is what guarantees a
+      // structured response every time, instead of Claude sometimes just
+      // replying with plain text.
+      tool_choice: { type: "tool", name: "report_decision" },
+    }),
   });
 
-  const data = await response.json();
-  const parts = data.candidates?.[0]?.content?.parts ?? [];
-  const functionCallPart = parts.find((p) => p.functionCall);
-
-  if (!functionCallPart) {
-    throw new Error("Gemini did not return a functionCall despite forced tool_config");
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Claude API error ${response.status}: ${errText}`);
   }
 
-  // Note: unlike some other providers, Gemini's functionCall.args arrives
-  // as an already-parsed object, not a JSON string — no JSON.parse needed.
-  return functionCallPart.functionCall.args; // shaped like our step_type decision object
+  const data = await response.json();
+  const toolUseBlock = data.content.find((block) => block.type === "tool_use");
+  if (!toolUseBlock) {
+    // Shouldn't happen with tool_choice forced, but fail loudly if it does
+    // rather than silently returning something malformed to the extension.
+    throw new Error("Claude did not return a tool_use block despite forced tool_choice");
+  }
+
+  return toolUseBlock.input; // already shaped exactly like our step_type decision object
 }
 
 export { getNextStep };
