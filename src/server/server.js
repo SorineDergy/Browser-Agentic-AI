@@ -15,10 +15,24 @@
 
 import "dotenv/config";
 import express from "express";
-import { getNextStep } from "./providers/gemini.js";
+import { getNextStep } from "./providers/ollama.js";
+import { forwardBlurRequest } from "./blurSupervisor.js";
 
 const app = express();
 app.use(express.json({ limit: "15mb" })); // images can be large
+
+// The extension calls THIS route for blurring instead of talking to the
+// Python service directly. blurSupervisor starts the Python process on
+// demand, forwards the request, and shuts it down after idle time.
+app.post("/blur", async (req, res) => {
+  try {
+    const result = await forwardBlurRequest(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error("Blur request failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 const USE_REAL_MODEL = !!process.env.GEMINI_API_KEY;
 if (USE_REAL_MODEL) {

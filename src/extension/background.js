@@ -7,7 +7,9 @@
 // contract this code implements.
 
 const SERVER_URL = "http://localhost:8787/agent"; // swap for your real endpoint
-const BLUR_SERVER_URL = "http://localhost:8788/blur"; // your local Python blur service
+// Blur requests go through the Node server, which starts the Python blur
+// service on demand and shuts it down after idle time (blurSupervisor.js).
+const BLUR_SERVER_URL = "http://localhost:8787/blur";
 const MAX_STEPS = 15; // circuit breaker so a confused model can't loop forever
 
 async function blurImageLocally(dataUrl) {
